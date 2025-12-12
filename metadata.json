@@ -1,0 +1,5 @@
+{
+  "name": "上海卧宏（WHB）运费比价助手",
+  "description": "A logistics tool to compare shipping costs between JD Logistics and Kyayue Express (KYE) based on product dimensions and weight. Features AI-powered smart order parsing.",
+  "requestFramePermissions": []
+}
