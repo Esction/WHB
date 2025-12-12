@@ -81,7 +81,7 @@ export const ComparisonCard: React.FC<ComparisonCardProps> = ({ result, config, 
                  </div>
                  <div>
                    <span className="text-gray-400 mr-1">计费:</span>
-                   <span className="font-semibold text-gray-900">{Math.max(result.totalVolumeM3 || 0, 0.5).toFixed(2)} m³</span>
+                   <span className="font-semibold text-gray-900">{result.chargeableWeight.toFixed(2)} m³</span>
                  </div>
               </div>
            ) : (

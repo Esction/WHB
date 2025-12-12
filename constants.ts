@@ -108,7 +108,8 @@ export const PRODUCT_DATABASE: Product[] = [
 export const DEFAULT_JD_CONFIG: ShippingConfig = {
   name: '京东物流 (JD)',
   code: 'JD',
-  volumeFactor: 6000,
+  // Volume factor updated to 8000
+  volumeFactor: 8000,
 };
 
 export const DEFAULT_KYE_CONFIG: ShippingConfig = {
@@ -120,45 +121,109 @@ export const DEFAULT_KYE_CONFIG: ShippingConfig = {
 export const DEFAULT_KYE_GROUND_CONFIG: ShippingConfig = {
   name: '跨越速运 (KYE) 陆运件',
   code: 'KYE_GROUND',
-  volumeFactor: 1, 
+  // Updated to 6000 to enable density check: Billing Weight = Max(Real Weight, Volumetric Weight)
+  volumeFactor: 6000, 
 };
 
 export const DEFAULT_KYE_PROVINCE_CONFIG: ShippingConfig = {
   name: '跨越速运 (KYE) 省内次日',
   code: 'KYE_PROVINCE',
-  volumeFactor: 1, 
+  volumeFactor: 7000, 
 };
 
-// JD Standard Rates (Helper)
+// JD Standard Rates (New Structure from Image)
+// Tiers Logic: [0, 30] -> unitPrice, [30, Infinity] -> unitPrice2
 const JD_RATES = {
-  zone1: { basePrice: 7.2, baseWeight: 1, unitPrice: 1.2, unitPrice2: 1.8 },
-  zone2: { basePrice: 7.8, baseWeight: 1, unitPrice: 1.2, unitPrice2: 1.8 },
-  zone3: { basePrice: 9, baseWeight: 1, unitPrice: 3, unitPrice2: 3.6 },
-  zone4: { basePrice: 9.6, baseWeight: 1, unitPrice: 3.6, unitPrice2: 4.2 },
-  zone5: { basePrice: 10.2, baseWeight: 1, unitPrice: 3.6, unitPrice2: 4.2 },
+  // Row 1: 7.2 | 1.2 | 1.8
+  // Shanghai, Zhejiang, Jiangsu, Anhui (Maanshan, Wuhu, Xuancheng)
+  zone1: { 
+    basePrice: 7.2, baseWeight: 1, 
+    unitPrice: 1.2, unitPrice2: 1.8 
+  },
+  
+  // Row 2: 7.8 | 1.2 | 1.8
+  // Anhui (Rest)
+  zone2: { 
+    basePrice: 7.8, baseWeight: 1, 
+    unitPrice: 1.2, unitPrice2: 1.8 
+  },
+  
+  // Row 3: 9.0 | 3.0 | 3.6
+  // Shandong (WeiFang, Linyi...), Hubei (Huangshi...), Fujian (Fuzhou...), Jiangxi (Jiujiang...), Henan (Zhengzhou...)
+  zone3: { 
+    basePrice: 9.0, baseWeight: 1, 
+    unitPrice: 3.0, unitPrice2: 3.6 
+  },
+  
+  // Row 4: 9.6 | 3.6 | 4.2
+  // Tianjin, Chongqing, Shaanxi, Guizhou, Liaoning, Jilin, Hebei, Beijing, Hunan, Shanxi, Guangdong, Ningxia
+  // Sichuan (Chengdu...), Inner Mongolia (Hohhot...), Henan (Hebi...), Hubei (Wuhan...), Jiangxi (Nanchang...), Guangxi (Nanning...), Shandong (Qingdao/Jinan), Fujian (Xiamen...), Gansu (Lanzhou)
+  zone4: { 
+    basePrice: 9.6, baseWeight: 1, 
+    unitPrice: 3.6, unitPrice2: 4.2 
+  },
+  
+  // Row 5: 10.2 | 3.6 | 4.2
+  // Yunnan, Heilongjiang, Sichuan (Remote), Hainan (Remote), Gansu (Remote), Guangxi (Remote), Qinghai (Main), Inner Mongolia (Remote)
+  zone5: { 
+    basePrice: 10.2, baseWeight: 1, 
+    unitPrice: 3.6, unitPrice2: 4.2 
+  },
+
+  // Row 6: 11.4 | 6.3 | 6.9 - Qinghai (Yushu)
   zone6: { basePrice: 11.4, baseWeight: 1, unitPrice: 6.3, unitPrice2: 6.9 },
-  zone7: { basePrice: 12, baseWeight: 1, unitPrice: 4.8, unitPrice2: 7.2 },
+
+  // Row 7: 12.0 | 4.8 | 5.4 - Xinjiang
+  zone7: { basePrice: 12.0, baseWeight: 1, unitPrice: 4.8, unitPrice2: 5.4 },
+
+  // Row 8: 13.8 | 11.1 | 11.7 - Tibet (Changdu)
   zone8: { basePrice: 13.8, baseWeight: 1, unitPrice: 11.1, unitPrice2: 11.7 },
+
+  // Row 9: 14.4 | 7.2 | 7.8 - Tibet (Lhasa, Linzhi, etc)
   zone9: { basePrice: 14.4, baseWeight: 1, unitPrice: 7.2, unitPrice2: 7.8 },
+
+  // Row 10: 16.8 | 10.5 | 11.1 - Hainan (Sansha)
   zone10: { basePrice: 16.8, baseWeight: 1, unitPrice: 10.5, unitPrice2: 11.1 },
+
+  // Row 11: 17.4 | 13.8 | 14.4 - Tibet (Ali)
   zone11: { basePrice: 17.4, baseWeight: 1, unitPrice: 13.8, unitPrice2: 14.4 },
 };
 
+// Helper for Ground Pricing Construction
+// p1: (0, 3], p2: (3, 10], p3: (10, +inf)
+const groundRate = (minPrice: number, p1: number, p2: number, p3: number) => ({
+  minVolume: 0.5,
+  minPrice: minPrice,
+  tiers: [
+    { maxVolume: 3, pricePerCbm: p1 },
+    { maxVolume: 10, pricePerCbm: p2 },
+    { maxVolume: Infinity, pricePerCbm: p3 }
+  ]
+});
+
+// Helper for generic KYE Air (approximate backup if needed)
+const kyeAirDefault = (base: number) => ({ 
+  basePrice: base, baseWeight: 1, minPrice: 30,
+  tiers: [
+    { max: 30, price: 3.0 }, { max: 50, price: 2.5 }, { max: 99999, price: 2.5 }
+  ]
+});
+
+
 /**
- * Updated REGIONS with expanded list for East China to support KYE Intra-province Next Day specific pricing.
- * kyeProvince is added where applicable.
+ * REGIONS
  */
 export const REGIONS: Region[] = [
-  // --- SHANGHAI ---
+  // --- SHANGHAI (Origin) ---
   { 
     id: 'shanghai', name: '上海市', jd: JD_RATES.zone1, kye: null, kyeGround: null,
     kyeProvince: {
-       minVolume: 0.5, minPrice: 63,
-       tiers: [
-         { maxVolume: 3, pricePerCbm: 125 },
-         { maxVolume: 10, pricePerCbm: 115 },
-         { maxVolume: Infinity, pricePerCbm: 105 }
-       ]
+      minVolume: 0.5, minPrice: 63,
+      tiers: [
+        { maxVolume: 3, pricePerCbm: 125 },
+        { maxVolume: 10, pricePerCbm: 115 },
+        { maxVolume: Infinity, pricePerCbm: 105 }
+      ]
     }
   }, 
 
@@ -232,7 +297,7 @@ export const REGIONS: Region[] = [
 
   // --- ANHUI ---
   { 
-    id: 'anhui_wuhu', name: '安徽 (芜湖)', 
+    id: 'anhui_wan_special', name: '安徽 (马鞍山/芜湖/宣城)', 
     jd: JD_RATES.zone1, kye: null, kyeGround: null,
     kyeProvince: {
       minVolume: 0.6, minPrice: 84,
@@ -244,7 +309,8 @@ export const REGIONS: Region[] = [
     }
   },
   { 
-    id: 'anhui_hefei', name: '安徽 (合肥)', 
+    id: 'anhui_rest', name: '安徽 (合肥/滁州/安庆/蚌埠/阜阳等)', 
+    description: "合肥, 滁州, 蚌埠, 铜陵, 池州, 阜阳, 亳州, 宿州, 淮北, 淮南, 安庆, 黄山, 六安",
     jd: JD_RATES.zone2, kye: null, kyeGround: null,
     kyeProvince: {
       minVolume: 0.6, minPrice: 84,
@@ -255,47 +321,22 @@ export const REGIONS: Region[] = [
       ]
     }
   },
+
+  // --- GUANGXI ---
   { 
-    id: 'anhui_maanshan', name: '安徽 (马鞍山/宣城)', 
-    jd: JD_RATES.zone1, kye: null, kyeGround: null,
-    kyeProvince: {
-      minVolume: 0.65, minPrice: 85,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 130 },
-        { maxVolume: 10, pricePerCbm: 120 },
-        { maxVolume: Infinity, pricePerCbm: 115 }
-      ]
-    }
+    id: 'guangxi', name: '广西 (南宁/崇左)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(140, 280, 260, 240)
   },
   { 
-    id: 'anhui_chuzhou', name: '安徽 (滁州/六安/蚌埠/铜陵/池州)', 
-    jd: JD_RATES.zone2, kye: null, kyeGround: null,
-    kyeProvince: {
-      minVolume: 0.65, minPrice: 85,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 130 },
-        { maxVolume: 10, pricePerCbm: 120 },
-        { maxVolume: Infinity, pricePerCbm: 115 }
-      ]
-    }
-  },
-  { 
-    id: 'anhui_north', name: '安徽 (阜阳/亳州/宿州/淮北/淮南/安庆/黄山)', 
-    jd: JD_RATES.zone2, kye: null, kyeGround: null,
-    kyeProvince: {
-      minVolume: 0.6, minPrice: 84,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 140 },
-        { maxVolume: 10, pricePerCbm: 130 },
-        { maxVolume: Infinity, pricePerCbm: 115 }
-      ]
-    }
+    id: 'guangxi_liuzhou', name: '广西 (柳州/来宾/桂林)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(140, 280, 260, 240)
   },
 
-
-  // JD Zone 3
+  // --- FUJIAN ---
   { 
-    id: 'fujian', name: '福建省', jd: JD_RATES.zone3, kyeProvince: null,
+    id: 'fujian_major', name: '福建 (厦门/漳州/龙岩)', jd: JD_RATES.zone4, kyeProvince: null,
     kye: { 
       basePrice: 15, baseWeight: 1, minPrice: 32,
       tiers: [
@@ -304,393 +345,15 @@ export const REGIONS: Region[] = [
         { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
       ]
     },
-    // Xiamen/Fuzhou: 200, 180, 160. Min 100
-    kyeGround: {
-      minVolume: 0.5, minPrice: 100,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 200 },
-        { maxVolume: 10, pricePerCbm: 180 },
-        { maxVolume: Infinity, pricePerCbm: 160 }
-      ]
-    }
+    kyeGround: groundRate(100, 200, 180, 160)
   },
   { 
-    id: 'hubei', name: '湖北省', jd: JD_RATES.zone3, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 32,
-      tiers: [
-        { max: 30, price: 2.42 }, { max: 50, price: 2.11 }, { max: 100, price: 1.82 }, 
-        { max: 200, price: 1.68 }, { max: 300, price: 1.68 }, { max: 500, price: 1.54 }, 
-        { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
-      ]
-    },
-    // Wuhan: 200, 180, 170. Min 100
-    kyeGround: {
-      minVolume: 0.5, minPrice: 100,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 200 },
-        { maxVolume: 10, pricePerCbm: 180 },
-        { maxVolume: Infinity, pricePerCbm: 170 }
-      ]
-    }
-  },
-  { 
-    id: 'jiangxi', name: '江西省', jd: JD_RATES.zone3, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 34,
-      tiers: [
-        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.82 }, 
-        { max: 200, price: 1.68 }, { max: 300, price: 1.68 }, { max: 500, price: 1.54 }, 
-        { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
-      ]
-    },
-    // Nanchang: 220, 200, 170. Min 110
-    kyeGround: {
-      minVolume: 0.5, minPrice: 110,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 220 },
-        { maxVolume: 10, pricePerCbm: 200 },
-        { maxVolume: Infinity, pricePerCbm: 170 }
-      ]
-    }
-  },
-  { 
-    id: 'henan', name: '河南省', jd: JD_RATES.zone3, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 34,
-      tiers: [
-        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.82 }, 
-        { max: 200, price: 1.68 }, { max: 300, price: 1.68 }, { max: 500, price: 1.54 }, 
-        { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
-      ]
-    },
-    // Kaifeng/Zhengzhou: 210, 190, 170. Min 105
-    kyeGround: {
-      minVolume: 0.5, minPrice: 105,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 210 },
-        { maxVolume: 10, pricePerCbm: 190 },
-        { maxVolume: Infinity, pricePerCbm: 170 }
-      ]
-    }
-  },
-  { 
-    id: 'shandong', name: '山东省', jd: JD_RATES.zone3, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 34,
-      tiers: [
-        { max: 30, price: 2.78 }, { max: 50, price: 2.11 }, { max: 100, price: 1.92 }, 
-        { max: 200, price: 1.82 }, { max: 300, price: 1.82 }, { max: 500, price: 1.68 }, 
-        { max: 1000, price: 1.54 }, { max: 2000, price: 1.44 }, { max: 99999, price: 1.44 }
-      ]
-    },
-    // Qingdao/Jinan: 190, 170, 150. Min 95
-    kyeGround: {
-      minVolume: 0.5, minPrice: 95,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 190 },
-        { maxVolume: 10, pricePerCbm: 170 },
-        { maxVolume: Infinity, pricePerCbm: 150 }
-      ]
-    }
+    id: 'fujian_rest', name: '福建 (福州/泉州/三明/宁德/莆田/南平)', jd: JD_RATES.zone3, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(100, 200, 180, 160)
   },
 
-  // JD Zone 4
-  { 
-    id: 'beijing', name: '北京市', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 34,
-      tiers: [
-        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.92 }, 
-        { max: 200, price: 1.82 }, { max: 300, price: 1.60 }, { max: 500, price: 1.50 }, 
-        { max: 1000, price: 1.50 }, { max: 2000, price: 1.40 }, { max: 99999, price: 1.40 }
-      ]
-    },
-    // Beijing: 200, 180, 170. Min 100
-    kyeGround: {
-      minVolume: 0.5, minPrice: 100,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 200 },
-        { maxVolume: 10, pricePerCbm: 180 },
-        { maxVolume: Infinity, pricePerCbm: 170 }
-      ]
-    }
-  },
-  { 
-    id: 'tianjin', name: '天津市', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 32,
-      tiers: [
-        { max: 30, price: 2.42 }, { max: 50, price: 2.11 }, { max: 100, price: 1.92 }, 
-        { max: 200, price: 1.82 }, { max: 300, price: 1.82 }, { max: 500, price: 1.68 }, 
-        { max: 1000, price: 1.54 }, { max: 2000, price: 1.44 }, { max: 99999, price: 1.44 }
-      ]
-    },
-    // Tianjin: 200, 180, 170. Min 100
-    kyeGround: {
-      minVolume: 0.5, minPrice: 100,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 200 },
-        { maxVolume: 10, pricePerCbm: 180 },
-        { maxVolume: Infinity, pricePerCbm: 170 }
-      ]
-    }
-  },
-  { 
-    id: 'hebei', name: '河北省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 34,
-      tiers: [
-        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.92 }, 
-        { max: 200, price: 1.82 }, { max: 300, price: 1.82 }, { max: 500, price: 1.68 }, 
-        { max: 1000, price: 1.54 }, { max: 2000, price: 1.44 }, { max: 99999, price: 1.44 }
-      ]
-    },
-    // Shijiazhuang: 220, 200, 170. Min 110
-    kyeGround: {
-      minVolume: 0.5, minPrice: 110,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 220 },
-        { maxVolume: 10, pricePerCbm: 200 },
-        { maxVolume: Infinity, pricePerCbm: 170 }
-      ]
-    }
-  },
-  { 
-    id: 'guangdong', name: '广东省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 34,
-      tiers: [
-        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.60 }, 
-        { max: 200, price: 1.40 }, { max: 300, price: 1.40 }, { max: 500, price: 1.30 }, 
-        { max: 1000, price: 1.30 }, { max: 2000, price: 1.20 }, { max: 99999, price: 1.20 }
-      ]
-    },
-    // Dongguan/Foshan/Guangzhou: 200, 180, 170. Min 100
-    kyeGround: {
-      minVolume: 0.5, minPrice: 100,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 200 },
-        { maxVolume: 10, pricePerCbm: 180 },
-        { maxVolume: Infinity, pricePerCbm: 170 }
-      ]
-    }
-  },
-  { 
-    id: 'hunan', name: '湖南省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 34,
-      tiers: [
-        { max: 30, price: 2.78 }, { max: 50, price: 2.11 }, { max: 100, price: 1.82 }, 
-        { max: 200, price: 1.68 }, { max: 300, price: 1.68 }, { max: 500, price: 1.54 }, 
-        { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
-      ]
-    },
-    // Changsha: 200, 185, 170. Min 100
-    kyeGround: {
-      minVolume: 0.5, minPrice: 100,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 200 },
-        { maxVolume: 10, pricePerCbm: 185 },
-        { maxVolume: Infinity, pricePerCbm: 170 }
-      ]
-    }
-  },
-  { 
-    id: 'chongqing', name: '重庆市', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 36,
-      tiers: [
-        { max: 30, price: 3.03 }, { max: 50, price: 2.53 }, { max: 100, price: 2.21 }, 
-        { max: 200, price: 2.02 }, { max: 300, price: 2.02 }, { max: 500, price: 1.92 }, 
-        { max: 1000, price: 1.92 }, { max: 2000, price: 1.82 }, { max: 99999, price: 1.82 }
-      ]
-    },
-    // Chongqing: 300, 280, 255. Min 150
-    kyeGround: {
-      minVolume: 0.5, minPrice: 150,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 300 },
-        { maxVolume: 10, pricePerCbm: 280 },
-        { maxVolume: Infinity, pricePerCbm: 255 }
-      ]
-    }
-  },
-  { 
-    id: 'shanxi', name: '山西省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 32,
-      tiers: [
-        { max: 30, price: 4.24 }, { max: 50, price: 3.49 }, { max: 100, price: 3.17 }, 
-        { max: 200, price: 2.98 }, { max: 300, price: 2.98 }, { max: 500, price: 2.88 }, 
-        { max: 1000, price: 2.88 }, { max: 2000, price: 2.78 }, { max: 99999, price: 2.78 }
-      ]
-    },
-    // Taiyuan: 260, 240, 220. Min 130
-    kyeGround: {
-      minVolume: 0.5, minPrice: 130,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 260 },
-        { maxVolume: 10, pricePerCbm: 240 },
-        { maxVolume: Infinity, pricePerCbm: 220 }
-      ]
-    }
-  },
-  { 
-    id: 'shaanxi', name: '陕西省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 36,
-      tiers: [
-        { max: 30, price: 3.03 }, { max: 50, price: 2.53 }, { max: 100, price: 2.21 }, 
-        { max: 200, price: 2.02 }, { max: 300, price: 2.02 }, { max: 500, price: 1.92 }, 
-        { max: 1000, price: 1.92 }, { max: 2000, price: 1.82 }, { max: 99999, price: 1.82 }
-      ]
-    },
-    // Xi'an: 260, 240, 220. Min 130
-    kyeGround: {
-      minVolume: 0.5, minPrice: 130,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 260 },
-        { maxVolume: 10, pricePerCbm: 240 },
-        { maxVolume: Infinity, pricePerCbm: 220 }
-      ]
-    }
-  },
-  { 
-    id: 'liaoning', name: '辽宁省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 36,
-      tiers: [
-        { max: 30, price: 3.03 }, { max: 50, price: 2.53 }, { max: 100, price: 2.21 }, 
-        { max: 200, price: 2.02 }, { max: 300, price: 2.02 }, { max: 500, price: 1.92 }, 
-        { max: 1000, price: 1.92 }, { max: 2000, price: 1.82 }, { max: 99999, price: 1.82 }
-      ]
-    },
-    // Dalian/Shenyang: 260, 240, 220. Min 130
-    kyeGround: {
-      minVolume: 0.5, minPrice: 130,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 260 },
-        { maxVolume: 10, pricePerCbm: 240 },
-        { maxVolume: Infinity, pricePerCbm: 220 }
-      ]
-    }
-  },
-  { 
-    id: 'jilin', name: '吉林省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 39,
-      tiers: [
-        { max: 30, price: 6.05 }, { max: 50, price: 5.28 }, { max: 100, price: 4.32 }, 
-        { max: 200, price: 4.32 }, { max: 300, price: 4.32 }, { max: 500, price: 4.32 }, 
-        { max: 1000, price: 3.84 }, { max: 2000, price: 3.36 }, { max: 99999, price: 3.36 }
-      ]
-    },
-    // Changchun: 320, 300, 280. Min 160
-    kyeGround: {
-      minVolume: 0.5, minPrice: 160,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 320 },
-        { maxVolume: 10, pricePerCbm: 300 },
-        { maxVolume: Infinity, pricePerCbm: 280 }
-      ]
-    }
-  },
-  { 
-    id: 'guizhou', name: '贵州省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 30,
-      tiers: [
-        { max: 30, price: 3.63 }, { max: 50, price: 3.17 }, { max: 100, price: 2.59 }, 
-        { max: 200, price: 2.50 }, { max: 300, price: 2.50 }, { max: 500, price: 2.40 }, 
-        { max: 1000, price: 2.30 }, { max: 2000, price: 2.21 }, { max: 99999, price: 2.21 }
-      ]
-    },
-    // Guizhou (Guiyang): 320, 300, 270. Min 160
-    kyeGround: {
-      minVolume: 0.5, minPrice: 160,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 320 },
-        { maxVolume: 10, pricePerCbm: 300 },
-        { maxVolume: Infinity, pricePerCbm: 270 }
-      ]
-    }
-  },
-  { 
-    id: 'guangxi', name: '广西壮族自治区', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 30,
-      tiers: [
-        { max: 30, price: 3.63 }, { max: 50, price: 3.06 }, { max: 100, price: 2.78 }, 
-        { max: 200, price: 2.69 }, { max: 300, price: 2.64 }, { max: 500, price: 2.64 }, 
-        { max: 1000, price: 2.50 }, { max: 2000, price: 2.40 }, { max: 99999, price: 2.40 }
-      ]
-    },
-    // Nanning: 280, 260, 240. Min 140
-    kyeGround: {
-      minVolume: 0.5, minPrice: 140,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 280 },
-        { maxVolume: 10, pricePerCbm: 260 },
-        { maxVolume: Infinity, pricePerCbm: 240 }
-      ]
-    }
-  },
-  { 
-    id: 'ningxia', name: '宁夏回族自治区', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 49,
-      tiers: [
-        { max: 30, price: 8.47 }, { max: 50, price: 7.39 }, { max: 100, price: 6.24 }, 
-        { max: 200, price: 6.24 }, { max: 300, price: 6.24 }, { max: 500, price: 5.76 }, 
-        { max: 1000, price: 5.28 }, { max: 2000, price: 4.80 }, { max: 99999, price: 4.80 }
-      ]
-    },
-    // Not explicitly in table, leave null
-    kyeGround: null
-  },
-  { 
-    id: 'sichuan', name: '四川省', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 32,
-      tiers: [
-        { max: 30, price: 4.36 }, { max: 50, price: 3.75 }, { max: 100, price: 3.41 }, 
-        { max: 200, price: 3.22 }, { max: 300, price: 3.22 }, { max: 500, price: 3.12 }, 
-        { max: 1000, price: 3.12 }, { max: 2000, price: 3.02 }, { max: 99999, price: 3.02 }
-      ]
-    },
-    // Chengdu/Mianyang: 320, 290, 270. Min 160
-    kyeGround: {
-      minVolume: 0.5, minPrice: 160,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 320 },
-        { maxVolume: 10, pricePerCbm: 290 },
-        { maxVolume: Infinity, pricePerCbm: 270 }
-      ]
-    }
-  },
-  { 
-    id: 'neimenggu', name: '内蒙古自治区', jd: JD_RATES.zone4, kyeProvince: null,
-    kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 39,
-      tiers: [
-        { max: 30, price: 6.05 }, { max: 50, price: 5.28 }, { max: 100, price: 4.32 }, 
-        { max: 200, price: 4.32 }, { max: 300, price: 4.32 }, { max: 500, price: 3.84 }, 
-        { max: 1000, price: 3.84 }, { max: 2000, price: 3.36 }, { max: 99999, price: 3.36 }
-      ]
-    },
-    // Hohhot: 370, 340, 320. Min 185
-    kyeGround: {
-      minVolume: 0.5, minPrice: 185,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 370 },
-        { maxVolume: 10, pricePerCbm: 340 },
-        { maxVolume: Infinity, pricePerCbm: 320 }
-      ]
-    }
-  },
-
-  // JD Zone 5
+  // --- HAINAN ---
   { 
     id: 'hainan', name: '海南省', jd: JD_RATES.zone5, kyeProvince: null,
     kye: { 
@@ -701,18 +364,112 @@ export const REGIONS: Region[] = [
         { max: 1000, price: 1.82 }, { max: 2000, price: 1.73 }, { max: 99999, price: 1.73 }
       ]
     },
-    // Hainan: 350, 320, 290. Min 175
-    kyeGround: {
-      minVolume: 0.5, minPrice: 175,
+    kyeGround: groundRate(175, 350, 320, 290)
+  },
+
+  // --- GUIZHOU ---
+  { 
+    id: 'guizhou', name: '贵州省 (贵阳/遵义/安顺)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 30,
       tiers: [
-        { maxVolume: 3, pricePerCbm: 350 },
-        { maxVolume: 10, pricePerCbm: 320 },
-        { maxVolume: Infinity, pricePerCbm: 290 }
+        { max: 30, price: 3.63 }, { max: 50, price: 3.17 }, { max: 100, price: 2.59 }, 
+        { max: 200, price: 2.50 }, { max: 300, price: 2.50 }, { max: 500, price: 2.40 }, 
+        { max: 1000, price: 2.30 }, { max: 2000, price: 2.21 }, { max: 99999, price: 2.21 }
       ]
-    }
+    },
+    kyeGround: groundRate(160, 320, 300, 270)
+  },
+
+  // --- JIANGXI ---
+  { 
+    id: 'jiangxi_nanchang', name: '江西 (南昌/赣州)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 34,
+      tiers: [
+        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.82 }, 
+        { max: 200, price: 1.68 }, { max: 300, price: 1.68 }, { max: 500, price: 1.54 }, 
+        { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
+      ]
+    },
+    kyeGround: groundRate(110, 220, 200, 170)
   },
   { 
-    id: 'yunnan', name: '云南省', jd: JD_RATES.zone5, kyeProvince: null,
+    id: 'jiangxi_jiujiang', name: '江西 (九江/吉安/景德镇等)', description: "九江, 吉安, 景德镇, 抚州, 宜春, 上饶, 新余, 鹰潭, 萍乡", jd: JD_RATES.zone3, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(140, 280, 260, 240)
+  },
+
+  // --- GUANGDONG ---
+  { 
+    id: 'guangdong_pearl', name: '广东 (东莞/广州/深圳/珠海/中山)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 34,
+      tiers: [
+        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.60 }, 
+        { max: 200, price: 1.40 }, { max: 300, price: 1.40 }, { max: 500, price: 1.30 }, 
+        { max: 1000, price: 1.30 }, { max: 2000, price: 1.20 }, { max: 99999, price: 1.20 }
+      ]
+    },
+    kyeGround: groundRate(100, 200, 180, 170)
+  },
+  { 
+    id: 'guangdong_huizhou', name: '广东 (惠州/佛山/肇庆/江门)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(100, 200, 180, 170)
+  },
+  { 
+    id: 'guangdong_remote', name: '广东 (其他地区)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(120, 240, 220, 210)
+  },
+
+  // --- HUBEI ---
+  { 
+    id: 'hubei_wuhan', name: '湖北 (武汉/襄阳/宜昌等)', description: "武汉, 襄阳, 十堰, 恩施, 荆州, 宜昌, 荆门, 神农架", jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 32,
+      tiers: [
+        { max: 30, price: 2.42 }, { max: 50, price: 2.11 }, { max: 100, price: 1.82 }, 
+        { max: 200, price: 1.68 }, { max: 300, price: 1.68 }, { max: 500, price: 1.54 }, 
+        { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
+      ]
+    },
+    kyeGround: groundRate(100, 200, 180, 170)
+  },
+  { 
+    id: 'hubei_huangshi', name: '湖北 (黄石/孝感/黄冈等)', description: "黄石, 鄂州, 潜江, 天门, 孝感, 仙桃, 黄冈, 咸宁, 随州", jd: JD_RATES.zone3, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(100, 200, 175, 150)
+  },
+
+  // --- HUNAN ---
+  { 
+    id: 'hunan_changde', name: '湖南 (常德)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(180, 360, 350, 340)
+  },
+  { 
+    id: 'hunan_changsha', name: '湖南 (湘潭/长沙/株洲)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 34,
+      tiers: [
+        { max: 30, price: 2.78 }, { max: 50, price: 2.11 }, { max: 100, price: 1.82 }, 
+        { max: 200, price: 1.68 }, { max: 300, price: 1.68 }, { max: 500, price: 1.54 }, 
+        { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
+      ]
+    },
+    kyeGround: groundRate(100, 200, 185, 170)
+  },
+  { 
+    id: 'hunan_yiyang', name: '湖南 (益阳)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(100, 200, 185, 170)
+  },
+
+  // --- YUNNAN ---
+  { 
+    id: 'yunnan', name: '云南 (昆明)', jd: JD_RATES.zone5, kyeProvince: null,
     kye: { 
       basePrice: 10, baseWeight: 1, minPrice: 40,
       tiers: [
@@ -721,38 +478,55 @@ export const REGIONS: Region[] = [
         { max: 1000, price: 1.92 }, { max: 2000, price: 1.82 }, { max: 99999, price: 1.82 }
       ]
     },
-    // Kunming: 350, 320, 290. Min 175
-    kyeGround: {
-      minVolume: 0.5, minPrice: 175,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 350 },
-        { maxVolume: 10, pricePerCbm: 320 },
-        { maxVolume: Infinity, pricePerCbm: 290 }
-      ]
-    }
+    kyeGround: groundRate(175, 350, 320, 290)
   },
+
+  // --- CHONGQING ---
   { 
-    id: 'heilongjiang', name: '黑龙江省', jd: JD_RATES.zone5, kyeProvince: null,
+    id: 'chongqing', name: '重庆市', jd: JD_RATES.zone4, kyeProvince: null,
     kye: { 
-      basePrice: 15, baseWeight: 1, minPrice: 37,
+      basePrice: 15, baseWeight: 1, minPrice: 36,
       tiers: [
-        { max: 30, price: 5.45 }, { max: 50, price: 4.75 }, { max: 100, price: 4.32 }, 
-        { max: 200, price: 3.84 }, { max: 300, price: 3.84 }, { max: 500, price: 3.84 }, 
-        { max: 1000, price: 3.36 }, { max: 2000, price: 2.88 }, { max: 99999, price: 2.88 }
+        { max: 30, price: 3.03 }, { max: 50, price: 2.53 }, { max: 100, price: 2.21 }, 
+        { max: 200, price: 2.02 }, { max: 300, price: 2.02 }, { max: 500, price: 1.92 }, 
+        { max: 1000, price: 1.92 }, { max: 2000, price: 1.82 }, { max: 99999, price: 1.82 }
       ]
     },
-    // Harbin: 350, 330, 300. Min 175
-    kyeGround: {
-      minVolume: 0.5, minPrice: 175,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 350 },
-        { maxVolume: 10, pricePerCbm: 330 },
-        { maxVolume: Infinity, pricePerCbm: 300 }
-      ]
-    }
+    kyeGround: groundRate(150, 300, 280, 255)
+  },
+
+  // --- SICHUAN ---
+  { 
+    id: 'sichuan_mianyang', name: '四川 (绵阳)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(160, 320, 290, 270)
   },
   { 
-    id: 'gansu', name: '甘肃省', jd: JD_RATES.zone4, kyeProvince: null,
+    id: 'sichuan_zigong', name: '四川 (自贡/南充/达州/遂宁/广安/巴中/泸州/宜宾/内江/乐山/雅安/德阳/广元)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(170, 340, 310, 290)
+  },
+  { 
+    id: 'sichuan_aba', name: '四川 (阿坝/甘孜/凉山/攀枝花)', jd: JD_RATES.zone5, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(180, 360, 340, 330)
+  },
+  { 
+    id: 'sichuan_chengdu', name: '四川 (眉山/成都/资阳)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 32,
+      tiers: [
+        { max: 30, price: 4.36 }, { max: 50, price: 3.75 }, { max: 100, price: 3.41 }, 
+        { max: 200, price: 3.22 }, { max: 300, price: 3.22 }, { max: 500, price: 3.12 }, 
+        { max: 1000, price: 3.12 }, { max: 2000, price: 3.02 }, { max: 99999, price: 3.02 }
+      ]
+    },
+    kyeGround: groundRate(160, 320, 290, 270)
+  },
+
+  // --- GANSU ---
+  { 
+    id: 'gansu', name: '甘肃 (兰州)', jd: JD_RATES.zone4, kyeProvince: null,
     kye: { 
       basePrice: 18, baseWeight: 1, minPrice: 49,
       tiers: [
@@ -761,18 +535,235 @@ export const REGIONS: Region[] = [
         { max: 1000, price: 5.76 }, { max: 2000, price: 5.76 }, { max: 99999, price: 5.76 }
       ]
     },
-    // Lanzhou: 480, 450, 420. Min 240
-    kyeGround: {
-      minVolume: 0.5, minPrice: 240,
+    kyeGround: groundRate(240, 480, 450, 420)
+  },
+
+  // --- XINJIANG ---
+  { 
+    id: 'xinjiang', name: '新疆 (乌鲁木齐)', jd: JD_RATES.zone7, kyeProvince: null,
+    kye: { 
+      basePrice: 22, baseWeight: 1, minPrice: 107,
       tiers: [
-        { maxVolume: 3, pricePerCbm: 480 },
-        { maxVolume: 10, pricePerCbm: 450 },
-        { maxVolume: Infinity, pricePerCbm: 420 }
+        { max: 30, price: 12.10 }, { max: 50, price: 10.56 }, { max: 100, price: 8.64 }, 
+        { max: 200, price: 8.64 }, { max: 300, price: 8.64 }, { max: 500, price: 8.16 }, 
+        { max: 1000, price: 8.16 }, { max: 2000, price: 7.68 }, { max: 99999, price: 7.68 }
       ]
-    }
+    },
+    kyeGround: groundRate(240, 480, 450, 420)
+  },
+
+  // --- SHANDONG ---
+  { 
+    id: 'shandong_major', name: '山东 (青岛/济南)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 34,
+      tiers: [
+        { max: 30, price: 2.78 }, { max: 50, price: 2.11 }, { max: 100, price: 1.92 }, 
+        { max: 200, price: 1.82 }, { max: 300, price: 1.82 }, { max: 500, price: 1.68 }, 
+        { max: 1000, price: 1.54 }, { max: 2000, price: 1.44 }, { max: 99999, price: 1.44 }
+      ]
+    },
+    kyeGround: groundRate(95, 190, 170, 150)
   },
   { 
-    id: 'qinghai', name: '青海省', jd: JD_RATES.zone5, kyeProvince: null,
+    id: 'shandong_coastal', name: '山东 (烟台/威海/潍坊/日照)', jd: JD_RATES.zone3, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(95, 190, 170, 150)
+  },
+  { 
+    id: 'shandong_inland', name: '山东 (临沂/泰安/济宁/菏泽/德州/聊城/滨州/东营/淄博/枣庄)', jd: JD_RATES.zone3, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(110, 220, 200, 170)
+  },
+
+  // --- SHAANXI ---
+  { 
+    id: 'shaanxi_xian', name: '陕西 (西安/咸阳)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 36,
+      tiers: [
+        { max: 30, price: 3.03 }, { max: 50, price: 2.53 }, { max: 100, price: 2.21 }, 
+        { max: 200, price: 2.02 }, { max: 300, price: 2.02 }, { max: 500, price: 1.92 }, 
+        { max: 1000, price: 1.92 }, { max: 2000, price: 1.82 }, { max: 99999, price: 1.82 }
+      ]
+    },
+    kyeGround: groundRate(130, 260, 240, 220)
+  },
+  { 
+    id: 'shaanxi_baoji', name: '陕西 (宝鸡/铜川)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(145, 290, 270, 245)
+  },
+  { 
+    id: 'shaanxi_ankang', name: '陕西 (安康/汉中/商洛/渭南/延安/榆林)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(150, 300, 280, 260)
+  },
+
+  // --- TIANJIN ---
+  { 
+    id: 'tianjin', name: '天津市', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 32,
+      tiers: [
+        { max: 30, price: 2.42 }, { max: 50, price: 2.11 }, { max: 100, price: 1.92 }, 
+        { max: 200, price: 1.82 }, { max: 300, price: 1.82 }, { max: 500, price: 1.68 }, 
+        { max: 1000, price: 1.54 }, { max: 2000, price: 1.44 }, { max: 99999, price: 1.44 }
+      ]
+    },
+    kyeGround: groundRate(100, 200, 180, 170)
+  },
+
+  // --- INNER MONGOLIA ---
+  { 
+    id: 'neimenggu_hohhot', name: '内蒙古 (呼和浩特/包头/鄂尔多斯等)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 39,
+      tiers: [
+        { max: 30, price: 6.05 }, { max: 50, price: 5.28 }, { max: 100, price: 4.32 }, 
+        { max: 200, price: 4.32 }, { max: 300, price: 4.32 }, { max: 500, price: 3.84 }, 
+        { max: 1000, price: 3.84 }, { max: 2000, price: 3.36 }, { max: 99999, price: 3.36 }
+      ]
+    },
+    kyeGround: groundRate(185, 370, 340, 320)
+  },
+  { 
+    id: 'neimenggu_remote', name: '内蒙古 (呼伦贝尔)', jd: JD_RATES.zone5, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(195, 390, 365, 340)
+  },
+
+  // --- LIAONING ---
+  { 
+    id: 'liaoning_dalian', name: '辽宁 (大连/本溪/抚顺/沈阳/铁岭)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 36,
+      tiers: [
+        { max: 30, price: 3.03 }, { max: 50, price: 2.53 }, { max: 100, price: 2.21 }, 
+        { max: 200, price: 2.02 }, { max: 300, price: 2.02 }, { max: 500, price: 1.92 }, 
+        { max: 1000, price: 1.92 }, { max: 2000, price: 1.82 }, { max: 99999, price: 1.82 }
+      ]
+    },
+    kyeGround: groundRate(130, 260, 240, 220)
+  },
+  { 
+    id: 'liaoning_anshan', name: '辽宁 (鞍山)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(150, 300, 280, 260)
+  },
+
+  // --- JILIN ---
+  { 
+    id: 'jilin_changchun', name: '吉林 (长春/吉林)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 39,
+      tiers: [
+        { max: 30, price: 6.05 }, { max: 50, price: 5.28 }, { max: 100, price: 4.32 }, 
+        { max: 200, price: 4.32 }, { max: 300, price: 4.32 }, { max: 500, price: 4.32 }, 
+        { max: 1000, price: 3.84 }, { max: 2000, price: 3.36 }, { max: 99999, price: 3.36 }
+      ]
+    },
+    kyeGround: groundRate(160, 320, 300, 280)
+  },
+  { 
+    id: 'jilin_other', name: '吉林 (白城/白山/辽源/四平/松原/松原/通化/延边)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(170, 340, 320, 300)
+  },
+
+  // --- HEILONGJIANG ---
+  { 
+    id: 'heilongjiang', name: '黑龙江 (哈尔滨)', jd: JD_RATES.zone5, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 37,
+      tiers: [
+        { max: 30, price: 5.45 }, { max: 50, price: 4.75 }, { max: 100, price: 4.32 }, 
+        { max: 200, price: 3.84 }, { max: 300, price: 3.84 }, { max: 500, price: 3.84 }, 
+        { max: 1000, price: 3.36 }, { max: 2000, price: 2.88 }, { max: 99999, price: 2.88 }
+      ]
+    },
+    kyeGround: groundRate(175, 350, 330, 300)
+  },
+
+  // --- BEIJING ---
+  { 
+    id: 'beijing', name: '北京市', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 34,
+      tiers: [
+        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.92 }, 
+        { max: 200, price: 1.82 }, { max: 300, price: 1.60 }, { max: 500, price: 1.50 }, 
+        { max: 1000, price: 1.50 }, { max: 2000, price: 1.40 }, { max: 99999, price: 1.40 }
+      ]
+    },
+    kyeGround: groundRate(100, 200, 180, 170)
+  },
+
+  // --- HEBEI ---
+  { 
+    id: 'hebei_shijiazhuang', name: '河北 (石家庄/廊坊)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 34,
+      tiers: [
+        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.92 }, 
+        { max: 200, price: 1.82 }, { max: 300, price: 1.82 }, { max: 500, price: 1.68 }, 
+        { max: 1000, price: 1.54 }, { max: 2000, price: 1.44 }, { max: 99999, price: 1.44 }
+      ]
+    },
+    kyeGround: groundRate(110, 220, 200, 170)
+  },
+  { 
+    id: 'hebei_handan', name: '河北 (邯郸/保定/沧州/秦皇岛/唐山)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(120, 240, 220, 200)
+  },
+  { 
+    id: 'hebei_chengde', name: '河北 (承德/衡水/邢台/张家口)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(120, 240, 220, 200)
+  },
+
+  // --- HENAN ---
+  { 
+    id: 'henan_kaifeng', name: '河南 (郑州/开封/南阳/新乡等)', description: "郑州, 开封, 南阳, 信阳, 商丘, 新乡, 濮阳, 周口, 漯河, 许昌, 驻马店, 平顶山", jd: JD_RATES.zone3, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 34,
+      tiers: [
+        { max: 30, price: 2.66 }, { max: 50, price: 2.11 }, { max: 100, price: 1.82 }, 
+        { max: 200, price: 1.68 }, { max: 300, price: 1.68 }, { max: 500, price: 1.54 }, 
+        { max: 1000, price: 1.44 }, { max: 2000, price: 1.34 }, { max: 99999, price: 1.34 }
+      ]
+    },
+    kyeGround: groundRate(105, 210, 190, 170)
+  },
+  { 
+    id: 'henan_anyang', name: '河南 (安阳/焦作/洛阳/三门峡等)', description: "安阳, 焦作, 济源, 洛阳, 三门峡, 鹤壁", jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(110, 220, 200, 180)
+  },
+
+  // --- SHANXI ---
+  { 
+    id: 'shanxi_taiyuan', name: '山西 (太原/晋中)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 32,
+      tiers: [
+        { max: 30, price: 4.24 }, { max: 50, price: 3.49 }, { max: 100, price: 3.17 }, 
+        { max: 200, price: 2.98 }, { max: 300, price: 2.98 }, { max: 500, price: 2.88 }, 
+        { max: 1000, price: 2.88 }, { max: 2000, price: 2.78 }, { max: 99999, price: 2.78 }
+      ]
+    },
+    kyeGround: groundRate(130, 260, 240, 220)
+  },
+  { 
+    id: 'shanxi_datong', name: '山西 (大同/晋城/临汾/吕梁/朔州/忻州/阳泉/运城/长治)', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: kyeAirDefault(15),
+    kyeGround: groundRate(140, 280, 260, 240)
+  },
+
+  // --- QINGHAI ---
+  { 
+    id: 'qinghai', name: '青海省 (西宁等)', jd: JD_RATES.zone5, kyeProvince: null,
     kye: { 
       basePrice: 20, baseWeight: 1, minPrice: 60,
       tiers: [
@@ -784,34 +775,50 @@ export const REGIONS: Region[] = [
     kyeGround: null
   },
   { 
-    id: 'xinjiang', name: '新疆维吾尔自治区', jd: JD_RATES.zone7, kyeProvince: null,
+    id: 'qinghai_yushu', name: '青海 (玉树州)', jd: JD_RATES.zone6, kyeProvince: null,
     kye: { 
-      basePrice: 22, baseWeight: 1, minPrice: 107,
+      basePrice: 20, baseWeight: 1, minPrice: 60,
+      tiers: [{ max: 99999, price: 7.20 }] // estimate
+    },
+    kyeGround: null
+  },
+  
+  // --- NINGXIA ---
+  { 
+    id: 'ningxia', name: '宁夏回族自治区', jd: JD_RATES.zone4, kyeProvince: null,
+    kye: { 
+      basePrice: 15, baseWeight: 1, minPrice: 49,
       tiers: [
-        { max: 30, price: 12.10 }, { max: 50, price: 10.56 }, { max: 100, price: 8.64 }, 
-        { max: 200, price: 8.64 }, { max: 300, price: 8.64 }, { max: 500, price: 8.16 }, 
-        { max: 1000, price: 8.16 }, { max: 2000, price: 7.68 }, { max: 99999, price: 7.68 }
+        { max: 30, price: 8.47 }, { max: 50, price: 7.39 }, { max: 100, price: 6.24 }, 
+        { max: 200, price: 6.24 }, { max: 300, price: 6.24 }, { max: 500, price: 5.76 }, 
+        { max: 1000, price: 5.28 }, { max: 2000, price: 4.80 }, { max: 99999, price: 4.80 }
       ]
     },
-    // Urumqi: 480, 450, 420. Min 240
-    kyeGround: {
-      minVolume: 0.5, minPrice: 240,
-      tiers: [
-        { maxVolume: 3, pricePerCbm: 480 },
-        { maxVolume: 10, pricePerCbm: 450 },
-        { maxVolume: Infinity, pricePerCbm: 420 }
-      ]
-    }
+    kyeGround: null
   },
+
+  // --- TIBET ---
   { 
-    id: 'xizang', name: '西藏自治区', jd: JD_RATES.zone9, kyeProvince: null,
+    id: 'xizang_changdu', name: '西藏 (昌都)', jd: JD_RATES.zone8, kyeProvince: null,
     kye: { 
       basePrice: 25, baseWeight: 1, minPrice: 78,
-      tiers: [
-        { max: 30, price: 13.31 }, { max: 50, price: 11.09 }, { max: 100, price: 10.08 }, 
-        { max: 200, price: 10.08 }, { max: 300, price: 10.08 }, { max: 500, price: 9.60 }, 
-        { max: 1000, price: 9.60 }, { max: 2000, price: 9.12 }, { max: 99999, price: 9.12 }
-      ]
+      tiers: [{ max: 99999, price: 9.60 }]
+    },
+    kyeGround: null
+  },
+  { 
+    id: 'xizang_lhasa', name: '西藏 (拉萨/林芝/日喀则/山南/那曲)', jd: JD_RATES.zone9, kyeProvince: null,
+    kye: { 
+      basePrice: 25, baseWeight: 1, minPrice: 78,
+      tiers: [{ max: 99999, price: 9.60 }]
+    },
+    kyeGround: null
+  },
+  { 
+    id: 'xizang_ali', name: '西藏 (阿里)', jd: JD_RATES.zone11, kyeProvince: null,
+    kye: { 
+      basePrice: 25, baseWeight: 1, minPrice: 78,
+      tiers: [{ max: 99999, price: 9.60 }]
     },
     kyeGround: null
   }

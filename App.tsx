@@ -267,7 +267,7 @@ export default function App() {
     setPastedImage(null);
   };
 
-  // Calculations logic remains same...
+  // Calculations logic
   const calculations = useMemo(() => {
     if (cart.length === 0) return null;
 
@@ -283,6 +283,20 @@ export default function App() {
       const volumetricWeight = (totalVolumeCbm * 1000000) / config.volumeFactor;
       let chargeableWeight = Math.max(totalActualWeight, volumetricWeight);
       
+      // JD Specific Rounding Logic
+      // 1. Min 1kg.
+      // 2. Extra weight rounded up to nearest 0.5kg.
+      if (config.code === 'JD') {
+        if (chargeableWeight <= 1) {
+          chargeableWeight = 1;
+        } else {
+          const base = 1;
+          const extra = chargeableWeight - base;
+          const roundedExtra = Math.ceil(extra * 2) / 2; // Round up to nearest 0.5
+          chargeableWeight = base + roundedExtra;
+        }
+      }
+
       const baseResult = {
          carrier: config.code,
          totalWeight: totalActualWeight,
@@ -302,10 +316,21 @@ export default function App() {
       }
 
       let price = 0;
+      // Handle generic tiers (if used by carrier)
       if (pricing.tiers && pricing.tiers.length > 0) {
          price = pricing.basePrice;
          let remainingWeight = chargeableWeight - pricing.baseWeight;
          let currentFloor = pricing.baseWeight;
+         
+         // Generic tier logic (cumulative)
+         // Check if this is legacy 'JD-style' logic where tiers are purely ranges?
+         // No, standard logic usually implies progressive or bucketed.
+         // However, if tiers is provided, we use it.
+         
+         // Note: For JD now, we only use unitPrice/unitPrice2 for simplicity as per new logic below,
+         // UNLESS the region data specifically provides a 'tiers' array (which none of our JD_NEW_RATES do).
+         // If a region DOES have tiers, we use them.
+         
          if (remainingWeight > 0) {
             for (const tier of pricing.tiers) {
                if (remainingWeight <= 0) break;
@@ -319,26 +344,41 @@ export default function App() {
             }
          }
       } else {
+         // Standard Base + Unit Price Logic
          if (chargeableWeight <= pricing.baseWeight) {
            price = pricing.basePrice;
          } else {
            const extraWeight = chargeableWeight - pricing.baseWeight;
-           if (pricing.unitPrice2 !== undefined) {
-              const tier1Limit = 29;
+           
+           // JD Specific Multi-tier logic based on provided columns: (1, 30] and 30+
+           if (config.code === 'JD' && pricing.unitPrice2 !== undefined) {
+              // The logic implies incremental steps. 
+              // Tier 1: 1kg -> 30kg (First 29kg of extra weight)
+              // Tier 2: > 30kg
+              
+              const tier1Limit = 29; // 30 - 1 base
+              
               if (extraWeight <= tier1Limit) {
-                price = pricing.basePrice + (extraWeight * (pricing.unitPrice || 0));
+                 price = pricing.basePrice + (extraWeight * (pricing.unitPrice || 0));
               } else {
-                const tier1Weight = tier1Limit;
-                const tier2Weight = extraWeight - tier1Limit;
-                price = pricing.basePrice + (tier1Weight * (pricing.unitPrice || 0)) + (tier2Weight * pricing.unitPrice2);
+                 const weightInTier1 = tier1Limit;
+                 const weightInTier2 = extraWeight - tier1Limit;
+                 price = pricing.basePrice + (weightInTier1 * (pricing.unitPrice || 0)) + (weightInTier2 * pricing.unitPrice2);
               }
            } else {
+              // Legacy or Single Tier
               price = pricing.basePrice + (extraWeight * (pricing.unitPrice || 0));
            }
          }
       }
+      
       if (pricing.minPrice && price < pricing.minPrice) price = pricing.minPrice;
       if (config.discount) price *= config.discount;
+
+      // JD Specific Price Rounding (Integer)
+      if (config.code === 'JD') {
+        price = Math.round(price);
+      }
 
       return { ...baseResult, totalPrice: price };
     };
@@ -347,7 +387,8 @@ export default function App() {
       const baseResult = {
          carrier: config.code,
          totalWeight: totalActualWeight,
-         volumetricWeight: (totalVolumeCbm * 1000000) / 6000,
+         // Display purpose only. Actual volumetric weight used for density check below.
+         volumetricWeight: (totalVolumeCbm * 1000000) / (config.volumeFactor || 6000),
          totalVolumeM3: totalVolumeCbm,
          chargeableWeight: 0,
          pricingUnit: 'M3' as const,
@@ -359,18 +400,36 @@ export default function App() {
         return { ...baseResult, error: !resolvedRegion ? '未找到对应地区' : '暂无报价' };
       }
 
-      const billingVolume = Math.max(totalVolumeCbm, pricing.minVolume);
+      // Density Check Logic:
+      // "Chargeable weight is the greater of volumetric weight and actual weight."
+      // For volume-based pricing (M3), if goods are very dense (Heavy), we convert the weight back into an 'equivalent volume'.
+      // 1 CBM = 1,000,000 / volumeFactor (kg). For 6000, 1 CBM ≈ 167 kg.
+      let billingVolume = totalVolumeCbm;
+      
+      // Note: We use 100 as a threshold to ensure we don't divide by small number if volumeFactor was set to 1 by mistake.
+      // Standard factors are 6000, 7000 etc.
+      if (config.volumeFactor && config.volumeFactor > 100) { 
+         const densityRatio = 1000000 / config.volumeFactor; // e.g., 166.67 kg/m3 for 6000
+         const weightBasedVolume = totalActualWeight / densityRatio;
+         billingVolume = Math.max(billingVolume, weightBasedVolume);
+      }
+
+      billingVolume = Math.max(billingVolume, pricing.minVolume);
+      
+      // Use <= for maxVolume check to support inclusive upper bounds (e.g., (0, 3] includes 3).
       const tier = pricing.tiers.find(t => billingVolume <= t.maxVolume);
+      
       let price = 0;
       if (tier) {
          price = billingVolume * tier.pricePerCbm;
       } else {
+         // Fallback to last tier if exceeds all maxVolumes (should be caught by Infinity in last tier)
          const lastTier = pricing.tiers[pricing.tiers.length - 1];
          price = billingVolume * lastTier.pricePerCbm;
       }
       if (price < pricing.minPrice) price = pricing.minPrice;
 
-      return { ...baseResult, totalPrice: price };
+      return { ...baseResult, chargeableWeight: billingVolume, totalPrice: price };
     };
 
     const jdRules = resolvedRegion ? resolvedRegion.jd : null;
@@ -650,7 +709,7 @@ export default function App() {
               <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 rounded-t-2xl">
                 <h2 className="font-semibold text-gray-900 flex items-center gap-2">
                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
-                   装箱清单
+                   货物清单
                 </h2>
                 <div className="flex items-center gap-2">
                    <span className="inline-flex items-center rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600">
@@ -792,11 +851,19 @@ export default function App() {
                           </svg>
                         </div>
                         <div>
-                          <h4 className="text-xs font-bold text-yellow-800 uppercase tracking-wide">免责声明</h4>
-                          <div className="mt-1 text-xs text-yellow-700 leading-relaxed">
+                          <h4 className="text-xs font-bold text-yellow-800 uppercase tracking-wide">规则说明</h4>
+                          <div className="mt-1 text-xs text-yellow-700 leading-relaxed space-y-1">
                             <p>
-                              此价格为预估参考价，最终价格以物流公司实际账单为准。不含包装费、保价费及燃油附加费。
-                              <br/>陆运及省内次日按方收费，不足最低一票按最低收费标准执行。
+                              1. <strong>京东标快：</strong> 首重1KG，不足1KG按1KG计算。续重以<strong>0.5KG</strong>为单位，不足0.5KG按0.5KG计算。运费结果<strong>四舍五入取整</strong>。
+                            </p>
+                            <p>
+                              2. <strong>京东体积：</strong> 体积重量 = 长×宽×高 ÷ <strong>8000</strong>，取实际重量与体积重量较大值。
+                            </p>
+                            <p>
+                              3. <strong>跨越速运：</strong> 陆运及省内次日按方收费，计费重量取体积重量(÷6000)与实际重量较大值。
+                            </p>
+                            <p>
+                              4. 此价格为预估参考价，不含保价、包装及偏远附加费等，实际以物流账单为准。
                             </p>
                           </div>
                         </div>
