@@ -131,6 +131,77 @@ export const DEFAULT_KYE_PROVINCE_CONFIG: ShippingConfig = {
   volumeFactor: 7000, 
 };
 
+export const DEFAULT_HUOLALA_CONFIG: ShippingConfig = {
+  name: '货拉拉 (Huolala)',
+  code: 'HUOLALA',
+  volumeFactor: 1, // Not used for weight calc, volume only
+};
+
+// Huolala Vehicle Definitions
+// Shanghai Pricing Rules (Origin: Fengxian)
+export const HUOLALA_VEHICLES = [
+  { 
+    name: '小面包车', 
+    maxVolume: 2.4, 
+    basePrice: 30, 
+    baseKm: 5, 
+    tiers: [
+      { start: 5, end: 10, price: 4.14 },
+      { start: 10, end: 15, price: 3.53 },
+      { start: 15, end: 30, price: 2.91 },
+      { start: 30, end: 50, price: 2.62 },
+      { start: 50, end: 100, price: 2.30 },
+      { start: 100, end: 200, price: 2.15 },
+      { start: 200, end: Infinity, price: 2.01 },
+    ]
+  },
+  { 
+    name: '中面包车', 
+    maxVolume: 6.1, 
+    basePrice: 45, 
+    baseKm: 5, 
+    tiers: [
+      { start: 5, end: 10, price: 5.69 },
+      { start: 10, end: 15, price: 4.59 },
+      { start: 15, end: 30, price: 3.50 },
+      { start: 30, end: 50, price: 3.02 },
+      { start: 50, end: 100, price: 2.55 },
+      { start: 100, end: 200, price: 2.37 },
+      { start: 200, end: Infinity, price: 2.21 },
+    ]
+  },
+  { 
+    name: '小货车', 
+    maxVolume: 7.2, 
+    basePrice: 65, 
+    baseKm: 5, 
+    tiers: [
+      { start: 5, end: 10, price: 7.70 },
+      { start: 10, end: 15, price: 5.93 },
+      { start: 15, end: 30, price: 4.16 },
+      { start: 30, end: 50, price: 3.42 },
+      { start: 50, end: 100, price: 2.76 },
+      { start: 100, end: 200, price: 2.47 },
+      { start: 200, end: Infinity, price: 2.22 },
+    ]
+  },
+  { 
+    name: '中货车', 
+    maxVolume: 12.3, 
+    basePrice: 100, 
+    baseKm: 5, 
+    tiers: [
+      { start: 5, end: 10, price: 11.10 },
+      { start: 10, end: 15, price: 8.13 },
+      { start: 15, end: 30, price: 5.16 },
+      { start: 30, end: 50, price: 3.97 },
+      { start: 50, end: 100, price: 3.08 },
+      { start: 100, end: 200, price: 2.64 },
+      { start: 200, end: Infinity, price: 2.24 },
+    ]
+  }
+];
+
 // JD Standard Rates (New Structure from Image)
 // Tiers Logic: [0, 30] -> unitPrice, [30, Infinity] -> unitPrice2
 const JD_RATES = {

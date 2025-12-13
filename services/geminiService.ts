@@ -93,3 +93,36 @@ export const parseOrderInput = async (text: string, imageBase64?: string | null)
     throw new Error("AI parsing failed. Please check your API key or input.");
   }
 };
+
+export const getDistanceEstimate = async (origin: string, destination: string): Promise<number | null> => {
+  try {
+    const prompt = `
+      Estimate the driving distance in kilometers between these two addresses in Shanghai, China.
+      
+      Origin: ${origin}
+      Destination: ${destination}
+      
+      Rules:
+      1. Return ONLY the numeric value in kilometers (e.g., 15.5).
+      2. Do not return any text, units, or JSON. Just the number.
+      3. Be as realistic as possible for a driving route.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    const text = response.text?.trim();
+    if (text) {
+      const distance = parseFloat(text);
+      if (!isNaN(distance)) {
+        return distance;
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error("Gemini distance estimate error:", error);
+    return null;
+  }
+};

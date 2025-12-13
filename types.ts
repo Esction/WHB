@@ -53,21 +53,25 @@ export interface Region {
 
 export interface ShippingConfig {
   name: string;
-  code: 'JD' | 'KYE' | 'KYE_GROUND' | 'KYE_PROVINCE';
+  code: 'JD' | 'KYE' | 'KYE_GROUND' | 'KYE_PROVINCE' | 'HUOLALA';
   volumeFactor: number;  
   discount?: number;     
 }
 
 export interface CalculationResult {
-  carrier: 'JD' | 'KYE' | 'KYE_GROUND' | 'KYE_PROVINCE';
+  carrier: 'JD' | 'KYE' | 'KYE_GROUND' | 'KYE_PROVINCE' | 'HUOLALA';
   totalWeight: number;    
   volumetricWeight: number;
   totalVolumeM3?: number; // Real volume in m3
   chargeableWeight: number; // Or chargeable volume if pricingUnit is M3
-  pricingUnit: 'KG' | 'M3';
+  pricingUnit: 'KG' | 'M3' | 'TRUCK';
   totalPrice: number;
   regionName: string;
   error?: string; // For cases where pricing is unavailable
+  
+  // Huolala specific fields
+  vehicleType?: string;
+  distance?: number;
 }
 
 export interface SmartParseResult {

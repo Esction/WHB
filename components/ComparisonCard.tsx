@@ -11,12 +11,22 @@ export const ComparisonCard: React.FC<ComparisonCardProps> = ({ result, config, 
   const isJD = result.carrier === 'JD';
   const isKyeGround = result.carrier === 'KYE_GROUND';
   const isKyeProvince = result.carrier === 'KYE_PROVINCE';
-  const isKyeAir = result.carrier === 'KYE';
+  const isHuolala = result.carrier === 'HUOLALA';
 
   // Branding Colors
-  const brandColor = isJD ? 'text-red-600' : 'text-purple-700';
-  const brandBg = isJD ? 'bg-red-50' : 'bg-purple-50';
-  const brandBorder = isJD ? 'border-red-100' : 'border-purple-100';
+  let brandColor = isJD ? 'text-red-600' : 'text-purple-700';
+  let brandBg = isJD ? 'bg-red-50' : 'bg-purple-50';
+  let brandBorder = isJD ? 'border-red-100' : 'border-purple-100';
+  let highlightRing = isJD ? 'border-red-500 ring-red-500/10' : 'border-purple-600 ring-purple-600/10';
+  let highlightBg = isJD ? 'bg-red-500' : 'bg-purple-600';
+
+  if (isHuolala) {
+    brandColor = 'text-orange-600';
+    brandBg = 'bg-orange-50';
+    brandBorder = 'border-orange-100';
+    highlightRing = 'border-orange-500 ring-orange-500/10';
+    highlightBg = 'bg-orange-500';
+  }
 
   if (result.error) {
     return (
@@ -25,7 +35,9 @@ export const ComparisonCard: React.FC<ComparisonCardProps> = ({ result, config, 
           <span className="text-sm font-medium text-gray-500">{config.name}</span>
           <span className="text-xs font-medium text-gray-400 bg-gray-100 px-2 py-1 rounded">不可用</span>
         </div>
-        <p className="text-xs text-gray-400 mt-2">该线路暂无报价或不在服务范围</p>
+        <p className="text-xs text-gray-400 mt-2">
+           {result.error === '需要详细地址' ? '请填写详细地址以估算运费' : '该线路暂无报价或不在服务范围'}
+        </p>
       </div>
     );
   }
@@ -35,12 +47,12 @@ export const ComparisonCard: React.FC<ComparisonCardProps> = ({ result, config, 
       <div 
         className={`
           relative overflow-hidden rounded-xl border-2 bg-white shadow-sm transition-all hover:shadow-md
-          ${isCheapest ? (isJD ? 'border-red-500 ring-4 ring-red-500/10' : 'border-purple-600 ring-4 ring-purple-600/10') : 'border-gray-100 hover:border-gray-300'}
+          ${isCheapest ? `${highlightRing} ring-4` : 'border-gray-100 hover:border-gray-300'}
         `}
       >
         {/* Recommended Badge */}
         {isCheapest && (
-          <div className={`absolute top-0 right-0 rounded-bl-xl px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm ${isJD ? 'bg-red-500' : 'bg-purple-600'}`}>
+          <div className={`absolute top-0 right-0 rounded-bl-xl px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm ${highlightBg}`}>
              最低价格
           </div>
         )}
@@ -50,13 +62,14 @@ export const ComparisonCard: React.FC<ComparisonCardProps> = ({ result, config, 
           <div className="flex-1 p-5 pr-0 flex flex-col justify-center">
              <div className="flex items-center gap-2 mb-1">
                 <h3 className={`font-bold text-gray-900 ${isCheapest ? 'text-lg' : 'text-base'}`}>
-                  {isJD ? '京东标快' : (isKyeGround ? '跨越陆运' : (isKyeProvince ? '省内次日' : '跨越隔日'))}
+                  {isJD ? '京东标快' : (isKyeGround ? '跨越陆运' : (isKyeProvince ? '省内次日' : (isHuolala ? '货拉拉(同城)' : '跨越隔日')))}
                 </h3>
              </div>
              <div className="flex flex-wrap gap-1.5 mt-1">
                {isKyeGround && <span className="inline-flex items-center rounded-md bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-700 ring-1 ring-inset ring-teal-600/20">按方计费</span>}
                {isKyeProvince && <span className="inline-flex items-center rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">省内特惠</span>}
-               {!isKyeGround && !isKyeProvince && <span className="inline-flex items-center rounded-md bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">按重计费</span>}
+               {isHuolala && <span className="inline-flex items-center rounded-md bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium text-orange-700 ring-1 ring-inset ring-orange-600/20">同城专车</span>}
+               {!isKyeGround && !isKyeProvince && !isHuolala && <span className="inline-flex items-center rounded-md bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">按重计费</span>}
              </div>
           </div>
 
@@ -73,32 +86,51 @@ export const ComparisonCard: React.FC<ComparisonCardProps> = ({ result, config, 
 
         {/* Details Footer */}
         <div className="bg-gray-50 px-5 py-3 border-t border-gray-100 flex justify-between items-center text-xs text-gray-500">
-           {result.pricingUnit === 'M3' ? (
-              <div className="flex gap-4">
-                 <div>
-                   <span className="text-gray-400 mr-1">体积:</span>
+           {isHuolala ? (
+             <div className="flex gap-4 w-full justify-between">
+                <div className="flex gap-4">
+                  <div>
+                    <span className="text-gray-400 mr-1">车型:</span>
+                    <span className="font-semibold text-gray-900">{result.vehicleType || '自动分配'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 mr-1">距离:</span>
+                    <span className="font-medium text-gray-700">{result.distance?.toFixed(1)} km</span>
+                  </div>
+                </div>
+                <div>
+                   <span className="text-gray-400 mr-1">货量:</span>
                    <span className="font-medium text-gray-700">{result.totalVolumeM3?.toFixed(3)} m³</span>
-                 </div>
-                 <div>
-                   <span className="text-gray-400 mr-1">计费:</span>
-                   <span className="font-semibold text-gray-900">{result.chargeableWeight.toFixed(2)} m³</span>
-                 </div>
-              </div>
+                </div>
+             </div>
            ) : (
-              <div className="flex gap-4">
-                 <div>
-                   <span className="text-gray-400 mr-1">实重:</span>
-                   <span className="font-medium text-gray-700">{result.totalWeight.toFixed(1)}kg</span>
-                 </div>
-                 <div>
-                   <span className="text-gray-400 mr-1">抛重:</span>
-                   <span className="font-medium text-gray-700">{result.volumetricWeight.toFixed(1)}kg</span>
-                 </div>
-                 <div>
-                   <span className="text-gray-400 mr-1">计费:</span>
-                   <span className="font-semibold text-gray-900">{result.chargeableWeight.toFixed(1)}kg</span>
-                 </div>
-              </div>
+             result.pricingUnit === 'M3' ? (
+                <div className="flex gap-4">
+                   <div>
+                     <span className="text-gray-400 mr-1">体积:</span>
+                     <span className="font-medium text-gray-700">{result.totalVolumeM3?.toFixed(3)} m³</span>
+                   </div>
+                   <div>
+                     <span className="text-gray-400 mr-1">计费:</span>
+                     <span className="font-semibold text-gray-900">{result.chargeableWeight.toFixed(2)} m³</span>
+                   </div>
+                </div>
+             ) : (
+                <div className="flex gap-4">
+                   <div>
+                     <span className="text-gray-400 mr-1">实重:</span>
+                     <span className="font-medium text-gray-700">{result.totalWeight.toFixed(1)}kg</span>
+                   </div>
+                   <div>
+                     <span className="text-gray-400 mr-1">抛重:</span>
+                     <span className="font-medium text-gray-700">{result.volumetricWeight.toFixed(1)}kg</span>
+                   </div>
+                   <div>
+                     <span className="text-gray-400 mr-1">计费:</span>
+                     <span className="font-semibold text-gray-900">{result.chargeableWeight.toFixed(1)}kg</span>
+                   </div>
+                </div>
+             )
            )}
         </div>
       </div>

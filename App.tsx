@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { PRODUCT_DATABASE, DEFAULT_JD_CONFIG, DEFAULT_KYE_CONFIG, DEFAULT_KYE_GROUND_CONFIG, DEFAULT_KYE_PROVINCE_CONFIG, REGIONS } from './constants';
+import { PRODUCT_DATABASE, DEFAULT_JD_CONFIG, DEFAULT_KYE_CONFIG, DEFAULT_KYE_GROUND_CONFIG, DEFAULT_KYE_PROVINCE_CONFIG, DEFAULT_HUOLALA_CONFIG, HUOLALA_VEHICLES, REGIONS } from './constants';
 import { Product, CartItem, ShippingConfig, CalculationResult, Region, PricingRule, VolumePricingRule, HistoryRecord } from './types';
 import { ComparisonCard } from './components/ComparisonCard';
 import { HistoryModal } from './components/HistoryModal';
-import { parseOrderInput } from './services/geminiService';
+import { parseOrderInput, getDistanceEstimate } from './services/geminiService';
+
+const ORIGIN_ADDRESS = "上海市奉贤区杨像路688号5号楼";
 
 export default function App() {
   const [selectedSku, setSelectedSku] = useState<string>('');
@@ -12,6 +14,9 @@ export default function App() {
   
   // Region / Address State
   const [regionInput, setRegionInput] = useState<string>(REGIONS[0].name);
+  const [detailedAddress, setDetailedAddress] = useState<string>('');
+  const [estimatedDistance, setEstimatedDistance] = useState<number | null>(null);
+  const [isDistanceLoading, setIsDistanceLoading] = useState(false);
 
   // Determine the active region based on input
   const resolvedRegion = useMemo(() => {
@@ -34,12 +39,14 @@ export default function App() {
   }, [regionInput]);
 
   const selectedRegionDesc = resolvedRegion?.description;
+  const isShanghai = resolvedRegion?.id === 'shanghai';
 
   // Settings / Config
   const [jdConfig] = useState<ShippingConfig>(DEFAULT_JD_CONFIG);
   const [kyeConfig] = useState<ShippingConfig>(DEFAULT_KYE_CONFIG);
   const [kyeGroundConfig] = useState<ShippingConfig>(DEFAULT_KYE_GROUND_CONFIG);
   const [kyeProvinceConfig] = useState<ShippingConfig>(DEFAULT_KYE_PROVINCE_CONFIG);
+  const [huolalaConfig] = useState<ShippingConfig>(DEFAULT_HUOLALA_CONFIG);
   
   // AI State
   const [aiInput, setAiInput] = useState('');
@@ -68,6 +75,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('shipping_calc_history', JSON.stringify(history));
   }, [history]);
+
+  // Reset detailed address if not Shanghai
+  useEffect(() => {
+    if (!isShanghai) {
+      setDetailedAddress('');
+      setEstimatedDistance(null);
+    }
+  }, [isShanghai]);
 
   // Auto-save on page unload
   useEffect(() => {
@@ -170,6 +185,23 @@ export default function App() {
     setCart(prev => prev.map(item => 
       item.id === id ? { ...item, quantity: newQty } : item
     ));
+  };
+
+  const handleEstimateDistance = async () => {
+    if (!detailedAddress.trim()) return;
+    setIsDistanceLoading(true);
+    try {
+      const dist = await getDistanceEstimate(ORIGIN_ADDRESS, detailedAddress);
+      if (dist !== null) {
+        setEstimatedDistance(dist);
+      } else {
+        alert("无法计算距离，请检查地址是否详细");
+      }
+    } catch (e) {
+      alert("距离计算失败");
+    } finally {
+      setIsDistanceLoading(false);
+    }
   };
 
   const handleSmartAdd = async () => {
@@ -322,15 +354,6 @@ export default function App() {
          let remainingWeight = chargeableWeight - pricing.baseWeight;
          let currentFloor = pricing.baseWeight;
          
-         // Generic tier logic (cumulative)
-         // Check if this is legacy 'JD-style' logic where tiers are purely ranges?
-         // No, standard logic usually implies progressive or bucketed.
-         // However, if tiers is provided, we use it.
-         
-         // Note: For JD now, we only use unitPrice/unitPrice2 for simplicity as per new logic below,
-         // UNLESS the region data specifically provides a 'tiers' array (which none of our JD_NEW_RATES do).
-         // If a region DOES have tiers, we use them.
-         
          if (remainingWeight > 0) {
             for (const tier of pricing.tiers) {
                if (remainingWeight <= 0) break;
@@ -350,14 +373,9 @@ export default function App() {
          } else {
            const extraWeight = chargeableWeight - pricing.baseWeight;
            
-           // JD Specific Multi-tier logic based on provided columns: (1, 30] and 30+
+           // JD Specific Multi-tier logic
            if (config.code === 'JD' && pricing.unitPrice2 !== undefined) {
-              // The logic implies incremental steps. 
-              // Tier 1: 1kg -> 30kg (First 29kg of extra weight)
-              // Tier 2: > 30kg
-              
               const tier1Limit = 29; // 30 - 1 base
-              
               if (extraWeight <= tier1Limit) {
                  price = pricing.basePrice + (extraWeight * (pricing.unitPrice || 0));
               } else {
@@ -366,7 +384,6 @@ export default function App() {
                  price = pricing.basePrice + (weightInTier1 * (pricing.unitPrice || 0)) + (weightInTier2 * pricing.unitPrice2);
               }
            } else {
-              // Legacy or Single Tier
               price = pricing.basePrice + (extraWeight * (pricing.unitPrice || 0));
            }
          }
@@ -387,7 +404,6 @@ export default function App() {
       const baseResult = {
          carrier: config.code,
          totalWeight: totalActualWeight,
-         // Display purpose only. Actual volumetric weight used for density check below.
          volumetricWeight: (totalVolumeCbm * 1000000) / (config.volumeFactor || 6000),
          totalVolumeM3: totalVolumeCbm,
          chargeableWeight: 0,
@@ -400,30 +416,22 @@ export default function App() {
         return { ...baseResult, error: !resolvedRegion ? '未找到对应地区' : '暂无报价' };
       }
 
-      // Density Check Logic:
-      // "Chargeable weight is the greater of volumetric weight and actual weight."
-      // For volume-based pricing (M3), if goods are very dense (Heavy), we convert the weight back into an 'equivalent volume'.
-      // 1 CBM = 1,000,000 / volumeFactor (kg). For 6000, 1 CBM ≈ 167 kg.
+      // Density Check Logic
       let billingVolume = totalVolumeCbm;
-      
-      // Note: We use 100 as a threshold to ensure we don't divide by small number if volumeFactor was set to 1 by mistake.
-      // Standard factors are 6000, 7000 etc.
       if (config.volumeFactor && config.volumeFactor > 100) { 
-         const densityRatio = 1000000 / config.volumeFactor; // e.g., 166.67 kg/m3 for 6000
+         const densityRatio = 1000000 / config.volumeFactor;
          const weightBasedVolume = totalActualWeight / densityRatio;
          billingVolume = Math.max(billingVolume, weightBasedVolume);
       }
 
       billingVolume = Math.max(billingVolume, pricing.minVolume);
       
-      // Use <= for maxVolume check to support inclusive upper bounds (e.g., (0, 3] includes 3).
       const tier = pricing.tiers.find(t => billingVolume <= t.maxVolume);
       
       let price = 0;
       if (tier) {
          price = billingVolume * tier.pricePerCbm;
       } else {
-         // Fallback to last tier if exceeds all maxVolumes (should be caught by Infinity in last tier)
          const lastTier = pricing.tiers[pricing.tiers.length - 1];
          price = billingVolume * lastTier.pricePerCbm;
       }
@@ -432,24 +440,90 @@ export default function App() {
       return { ...baseResult, chargeableWeight: billingVolume, totalPrice: price };
     };
 
+    const calculateHuolala = (config: ShippingConfig): CalculationResult => {
+      const baseResult = {
+        carrier: 'HUOLALA' as const,
+        totalWeight: totalActualWeight,
+        volumetricWeight: 0,
+        totalVolumeM3: totalVolumeCbm,
+        chargeableWeight: totalVolumeCbm,
+        pricingUnit: 'TRUCK' as const,
+        totalPrice: 0,
+        regionName: '上海市内',
+        vehicleType: '',
+        distance: estimatedDistance || 0
+      };
+
+      if (!isShanghai) {
+        return { ...baseResult, error: '仅限上海地区' };
+      }
+      if (estimatedDistance === null) {
+        return { ...baseResult, error: '需要详细地址' };
+      }
+
+      // Select Vehicle based on total volume
+      // Sort vehicles by maxVolume to ensure we pick the smallest sufficient one
+      const sortedVehicles = [...HUOLALA_VEHICLES].sort((a, b) => a.maxVolume - b.maxVolume);
+      const vehicle = sortedVehicles.find(v => totalVolumeCbm <= v.maxVolume);
+
+      if (!vehicle) {
+         return { ...baseResult, error: '超出单车最大装载量(12.3m³)' };
+      }
+
+      // Calculate Price based on tiers
+      let price = vehicle.basePrice;
+      const totalDist = estimatedDistance;
+
+      if (totalDist > vehicle.baseKm) {
+        // Only iterate if distance exceeds base kilometers
+        vehicle.tiers.forEach(tier => {
+           // Calculate the effective distance within this tier's range
+           // tier.start is inclusive for calculation start (e.g., >5km), tier.end is exclusive limit
+           // Range overlap logic: [tier.start, tier.end] vs [0, totalDist]
+           // Valid distance in this tier = Max(0, Min(tier.end, totalDist) - tier.start)
+           
+           const distInTier = Math.max(0, Math.min(tier.end, totalDist) - tier.start);
+           if (distInTier > 0) {
+             price += distInTier * tier.price;
+           }
+        });
+      }
+
+      return {
+        ...baseResult,
+        vehicleType: vehicle.name,
+        totalPrice: Math.round(price) // Round to nearest integer for clean display
+      };
+    };
+
     const jdRules = resolvedRegion ? resolvedRegion.jd : null;
     const kyeRules = resolvedRegion ? resolvedRegion.kye : null;
     const kyeGroundRules = resolvedRegion ? resolvedRegion.kyeGround : null;
     const kyeProvinceRules = resolvedRegion ? resolvedRegion.kyeProvince : null;
 
+    const huolalaResult = isShanghai ? calculateHuolala(huolalaConfig) : null;
+
     return { 
       jdResult: calculateWeightBased(jdConfig, jdRules),
       kyeResult: calculateWeightBased(kyeConfig, kyeRules),
       kyeGroundResult: calculateVolumeBased(kyeGroundConfig, kyeGroundRules),
-      kyeProvinceResult: calculateVolumeBased(kyeProvinceConfig, kyeProvinceRules)
+      kyeProvinceResult: calculateVolumeBased(kyeProvinceConfig, kyeProvinceRules),
+      huolalaResult: huolalaResult
     };
-  }, [cart, jdConfig, kyeConfig, kyeGroundConfig, kyeProvinceConfig, resolvedRegion]);
+  }, [cart, jdConfig, kyeConfig, kyeGroundConfig, kyeProvinceConfig, huolalaConfig, resolvedRegion, isShanghai, estimatedDistance]);
 
   const isValidSku = PRODUCT_DATABASE.some(p => p.sku === selectedSku);
 
-  const getCheapestCarrier = (results: { jdResult: CalculationResult, kyeResult: CalculationResult, kyeGroundResult: CalculationResult, kyeProvinceResult: CalculationResult } | null) => {
+  const getCheapestCarrier = (results: any) => {
     if (!results) return null;
-    const candidates = [results.jdResult, results.kyeResult, results.kyeGroundResult, results.kyeProvinceResult].filter(r => !r.error);
+    const candidates = [
+       results.jdResult, 
+       results.kyeResult, 
+       results.kyeGroundResult, 
+       results.kyeProvinceResult,
+       results.huolalaResult
+    ].filter(r => r && !r.error);
+    
     if (candidates.length === 0) return null;
     return candidates.reduce((prev, curr) => prev.totalPrice < curr.totalPrice ? prev : curr).carrier;
   };
@@ -481,7 +555,7 @@ export default function App() {
                <div className="flex items-center gap-2 mt-1.5">
                  <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">上海发货</span>
                  <span className="text-xs text-gray-400">|</span>
-                 <p className="text-xs text-gray-500">京东标快 / 跨越隔日达 / 陆运 / 省内次日</p>
+                 <p className="text-xs text-gray-500">京东标快 / 跨越隔日达 / 陆运 / 省内次日 / 货拉拉</p>
                </div>
              </div>
           </div>
@@ -546,6 +620,38 @@ export default function App() {
                         ))}
                       </datalist>
                     </div>
+
+                    {/* Huolala Extra Input */}
+                    {isShanghai && (
+                      <div className="mt-4 p-4 bg-orange-50 rounded-xl border border-orange-100 animate-fadeIn">
+                         <label className="block text-xs font-semibold text-orange-800 mb-2">
+                           详细收货地址 (用于货拉拉估算)
+                         </label>
+                         <div className="flex gap-2">
+                           <input 
+                             type="text"
+                             value={detailedAddress}
+                             onChange={(e) => setDetailedAddress(e.target.value)}
+                             placeholder="例如：浦东新区世纪大道100号"
+                             className="block w-full rounded-lg border-0 py-2.5 px-3 text-gray-900 ring-1 ring-inset ring-orange-200 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-orange-500 text-sm shadow-sm"
+                           />
+                           <button
+                             onClick={handleEstimateDistance}
+                             disabled={isDistanceLoading || !detailedAddress}
+                             className="whitespace-nowrap rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600 disabled:opacity-50 transition-colors"
+                           >
+                             {isDistanceLoading ? '计算中...' : '估算距离'}
+                           </button>
+                         </div>
+                         {estimatedDistance !== null && (
+                            <p className="mt-2 text-xs text-orange-700 flex items-center gap-1">
+                               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" /></svg>
+                               AI预估距离: <span className="font-bold">{estimatedDistance} km</span> (起点: 奉贤杨像路688号)
+                            </p>
+                         )}
+                      </div>
+                    )}
+
                     {/* Region Status */}
                     <div className="mt-2 min-h-[1.5rem]">
                        {selectedRegionDesc ? (
@@ -842,6 +948,14 @@ export default function App() {
                       isCheapest={cheapestCarrier === 'KYE_PROVINCE'} 
                     />
 
+                    {isShanghai && calculations.huolalaResult && (
+                      <ComparisonCard 
+                        result={calculations.huolalaResult} 
+                        config={huolalaConfig} 
+                        isCheapest={cheapestCarrier === 'HUOLALA'} 
+                      />
+                    )}
+
                     {/* Disclaimer */}
                     <div className="bg-yellow-50/50 rounded-xl p-4 border border-yellow-100 mt-6">
                       <div className="flex gap-3">
@@ -854,17 +968,19 @@ export default function App() {
                           <h4 className="text-xs font-bold text-yellow-800 uppercase tracking-wide">规则说明</h4>
                           <div className="mt-1 text-xs text-yellow-700 leading-relaxed space-y-1">
                             <p>
-                              1. <strong>京东标快：</strong> 首重1KG，不足1KG按1KG计算。续重以<strong>0.5KG</strong>为单位，不足0.5KG按0.5KG计算。运费结果<strong>四舍五入取整</strong>。
+                              1. <strong>京东标快：</strong> 首重1KG，续重以0.5KG为单位，运费四舍五入取整。
                             </p>
                             <p>
-                              2. <strong>京东体积：</strong> 体积重量 = 长×宽×高 ÷ <strong>8000</strong>，取实际重量与体积重量较大值。
+                              2. <strong>京东体积：</strong> 体积/8000。
                             </p>
                             <p>
-                              3. <strong>跨越速运：</strong> 陆运及省内次日按方收费，计费重量取体积重量(÷6000)与实际重量较大值。
+                              3. <strong>跨越速运：</strong> 陆运及省内次日按方收费(体积/6000)。
                             </p>
-                            <p>
-                              4. 此价格为预估参考价，不含保价、包装及偏远附加费等，实际以物流账单为准。
-                            </p>
+                            {isShanghai && (
+                              <p>
+                                4. <strong>货拉拉：</strong> 根据体积自动选择车型(小面/中面/小货/中货)。距离使用AI估算，采用分段计费(5km起步+续程分段费率)，费用四舍五入。
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
