@@ -316,8 +316,6 @@ export default function App() {
       let chargeableWeight = Math.max(totalActualWeight, volumetricWeight);
       
       // JD Specific Rounding Logic
-      // 1. Min 1kg.
-      // 2. Extra weight rounded up to nearest 0.5kg.
       if (config.code === 'JD') {
         if (chargeableWeight <= 1) {
           chargeableWeight = 1;
@@ -470,17 +468,15 @@ export default function App() {
          return { ...baseResult, error: '超出单车最大装载量(12.3m³)' };
       }
 
-      // Calculate Price based on tiers
+      // Progressive Tier Calculation
       let price = vehicle.basePrice;
       const totalDist = estimatedDistance;
 
       if (totalDist > vehicle.baseKm) {
-        // Only iterate if distance exceeds base kilometers
         vehicle.tiers.forEach(tier => {
-           // Calculate the effective distance within this tier's range
-           // tier.start is inclusive for calculation start (e.g., >5km), tier.end is exclusive limit
            // Range overlap logic: [tier.start, tier.end] vs [0, totalDist]
-           // Valid distance in this tier = Max(0, Min(tier.end, totalDist) - tier.start)
+           // tier.start is inclusive for rate application region, tier.end is exclusive limit
+           // Effective distance in this tier = Max(0, Min(tier.end, totalDist) - tier.start)
            
            const distInTier = Math.max(0, Math.min(tier.end, totalDist) - tier.start);
            if (distInTier > 0) {
@@ -492,7 +488,7 @@ export default function App() {
       return {
         ...baseResult,
         vehicleType: vehicle.name,
-        totalPrice: Math.round(price) // Round to nearest integer for clean display
+        totalPrice: Math.round(price)
       };
     };
 
@@ -514,21 +510,33 @@ export default function App() {
 
   const isValidSku = PRODUCT_DATABASE.some(p => p.sku === selectedSku);
 
-  const getCheapestCarrier = (results: any) => {
-    if (!results) return null;
-    const candidates = [
-       results.jdResult, 
-       results.kyeResult, 
-       results.kyeGroundResult, 
-       results.kyeProvinceResult,
-       results.huolalaResult
-    ].filter(r => r && !r.error);
-    
-    if (candidates.length === 0) return null;
-    return candidates.reduce((prev, curr) => prev.totalPrice < curr.totalPrice ? prev : curr).carrier;
-  };
-  
-  const cheapestCarrier = calculations ? getCheapestCarrier(calculations) : null;
+  // Sorting Logic: Cheapest to Expensive
+  const sortedDisplayList = useMemo(() => {
+    if (!calculations) return [];
+
+    const list = [
+      { key: 'JD', result: calculations.jdResult, config: jdConfig },
+      { key: 'KYE', result: calculations.kyeResult, config: kyeConfig },
+      { key: 'KYE_GROUND', result: calculations.kyeGroundResult, config: kyeGroundConfig },
+      { key: 'KYE_PROVINCE', result: calculations.kyeProvinceResult, config: kyeProvinceConfig },
+    ];
+
+    if (calculations.huolalaResult) {
+      list.push({ key: 'HUOLALA', result: calculations.huolalaResult, config: huolalaConfig });
+    }
+
+    const valid = list.filter(item => !item.result.error);
+    const errors = list.filter(item => item.result.error);
+
+    // Sort valid results by price ascending
+    valid.sort((a, b) => a.result.totalPrice - b.result.totalPrice);
+
+    return [...valid, ...errors];
+  }, [calculations, jdConfig, kyeConfig, kyeGroundConfig, kyeProvinceConfig, huolalaConfig]);
+
+  const cheapestCarrier = sortedDisplayList.length > 0 && !sortedDisplayList[0].result.error
+    ? sortedDisplayList[0].result.carrier 
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20 font-sans text-gray-900">
@@ -892,7 +900,9 @@ export default function App() {
                 <div className="flex items-end justify-between px-1">
                   <div>
                     <h2 className="text-lg font-bold text-gray-900">运费预估</h2>
-                    <p className="text-xs text-gray-500 mt-1">基于当前市场价格实时计算</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {cheapestCarrier ? `已按价格从低到高排序` : '基于当前市场价格实时计算'}
+                    </p>
                   </div>
                   {cart.length > 0 && calculations && (
                     <button
@@ -924,37 +934,15 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <ComparisonCard 
-                      result={calculations.jdResult} 
-                      config={jdConfig} 
-                      isCheapest={cheapestCarrier === 'JD'} 
-                    />
-                    
-                    <ComparisonCard 
-                      result={calculations.kyeResult} 
-                      config={kyeConfig} 
-                      isCheapest={cheapestCarrier === 'KYE'} 
-                    />
-
-                    <ComparisonCard 
-                      result={calculations.kyeGroundResult} 
-                      config={kyeGroundConfig} 
-                      isCheapest={cheapestCarrier === 'KYE_GROUND'} 
-                    />
-                    
-                    <ComparisonCard 
-                      result={calculations.kyeProvinceResult} 
-                      config={kyeProvinceConfig} 
-                      isCheapest={cheapestCarrier === 'KYE_PROVINCE'} 
-                    />
-
-                    {isShanghai && calculations.huolalaResult && (
+                    {/* Render Sorted Results */}
+                    {sortedDisplayList.map(({ key, result, config }) => (
                       <ComparisonCard 
-                        result={calculations.huolalaResult} 
-                        config={huolalaConfig} 
-                        isCheapest={cheapestCarrier === 'HUOLALA'} 
+                        key={key}
+                        result={result} 
+                        config={config} 
+                        isCheapest={result.carrier === cheapestCarrier} 
                       />
-                    )}
+                    ))}
 
                     {/* Disclaimer */}
                     <div className="bg-yellow-50/50 rounded-xl p-4 border border-yellow-100 mt-6">
